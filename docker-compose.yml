@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  cti-middleware:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cti-middleware
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+      - "${WS_PORT:-3001}:3001"
+    environment:
+      # Server Configuration
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${PORT:-3000}
+      WS_PORT: ${WS_PORT:-3001}
+      
+      # FreePBX/Asterisk AMI Configuration
+      AMI_HOST: ${AMI_HOST:-freepbx}
+      AMI_PORT: ${AMI_PORT:-5038}
+      AMI_USERNAME: ${AMI_USERNAME}
+      AMI_SECRET: ${AMI_SECRET}
+      
+      # ElevenLabs Configuration
+      ELEVENLABS_WEBHOOK_SECRET: ${ELEVENLABS_WEBHOOK_SECRET}
+      
+      # SuiteCRM Configuration
+      SUITECRM_URL: ${SUITECRM_URL}
+      SUITECRM_CLIENT_ID: ${SUITECRM_CLIENT_ID}
+      SUITECRM_CLIENT_SECRET: ${SUITECRM_CLIENT_SECRET}
+      SUITECRM_USERNAME: ${SUITECRM_USERNAME}
+      SUITECRM_PASSWORD: ${SUITECRM_PASSWORD}
+      
+      # Security Configuration
+      API_KEY: ${API_KEY}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+      
+      # Logging Configuration
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_DIR: /app/logs
+    volumes:
+      - ./logs:/app/logs
+      - ./config.json:/app/config.json:ro
+    networks:
+      - cti-network
+    depends_on:
+      - freepbx
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: FreePBX container (if you want to run it locally)
+  freepbx:
+    image: tiredofit/freepbx:latest
+    container_name: freepbx
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+      - "5060:5060/udp"
+      - "5061:5061"
+      - "5038:5038"
+      - "10000-10200:10000-10200/udp"
+    environment:
+      - DB_EMBEDDED=TRUE
+      - ENABLE_XMPP=FALSE
+    volumes:
+      - freepbx-data:/data
+      - freepbx-logs:/var/log
+      - freepbx-etc:/etc
+    networks:
+      - cti-network
+    cap_add:
+      - NET_ADMIN
+
+networks:
+  cti-network:
+    driver: bridge
+
+volumes:
+  freepbx-data:
+  freepbx-logs:
+  freepbx-etc:
+

@@ -1,0 +1,55 @@
+# Development files
+.env
+.env.*
+!.env.example
+env.template
+
+# Logs
+logs/
+*.log
+
+# Testing
+test/
+coverage/
+.nyc_output/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Scripts
+setup.sh
+
+# Example files
+example-client.html
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Temporary
+tmp/
+temp/
+
