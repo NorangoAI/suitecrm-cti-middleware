@@ -1,0 +1,45 @@
+{
+  "server": {
+    "port": 3000,
+    "wsPort": 3001,
+    "environment": "development"
+  },
+  "freepbx": {
+    "ami": {
+      "host": "localhost",
+      "port": 5038,
+      "username": "admin",
+      "secret": "changeme",
+      "reconnect": true,
+      "reconnectAfter": 3000
+    }
+  },
+  "elevenlabs": {
+    "webhookPath": "/webhook/elevenlabs",
+    "signatureHeader": "elevenlabs-signature",
+    "timestampTolerance": 1800
+  },
+  "suitecrm": {
+    "baseUrl": "https://your-suitecrm.com",
+    "apiVersion": "V8",
+    "timeout": 30000,
+    "retryAttempts": 3,
+    "retryDelay": 1000
+  },
+  "websocket": {
+    "pingInterval": 30000,
+    "maxConnections": 100
+  },
+  "logging": {
+    "level": "info",
+    "directory": "./logs",
+    "maxFiles": "14d",
+    "maxSize": "20m"
+  },
+  "security": {
+    "rateLimitWindowMs": 900000,
+    "rateLimitMaxRequests": 100,
+    "allowedOrigins": ["http://localhost:3000"],
+    "requireApiKey": true
+  }
+}
