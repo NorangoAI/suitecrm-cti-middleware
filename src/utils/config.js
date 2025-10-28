@@ -35,7 +35,8 @@ class Config {
         webhookSecret: process.env.ELEVENLABS_WEBHOOK_SECRET || '',
         webhookPath: fileConfig.elevenlabs?.webhookPath || '/webhook/elevenlabs',
         signatureHeader: fileConfig.elevenlabs?.signatureHeader || 'elevenlabs-signature',
-        timestampTolerance: fileConfig.elevenlabs?.timestampTolerance || 1800
+        timestampTolerance: fileConfig.elevenlabs?.timestampTolerance || 1800,
+        apiKey: process.env.ELEVENLABS_API_KEY || ''
       },
       suitecrm: {
         baseUrl: process.env.SUITECRM_URL || fileConfig.suitecrm?.baseUrl,

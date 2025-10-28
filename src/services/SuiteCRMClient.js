@@ -2,9 +2,10 @@ const axios = require('axios');
 const qs = require('qs');
 
 class SuiteCRMClient {
-  constructor(config, logger) {
+  constructor(config, logger, elevenlabsApiKey = '') {
     this.config = config;
     this.logger = logger;
+    this.elevenlabsApiKey = elevenlabsApiKey;
     this.baseUrl = config.baseUrl.replace(/\/$/, ''); // Remove trailing slash
     this.apiVersion = config.apiVersion || 'V8';
     this.accessToken = null;
@@ -104,6 +105,49 @@ class SuiteCRMClient {
     // If no token or token expired, authenticate
     if (!this.accessToken || (this.tokenExpiry && Date.now() >= this.tokenExpiry - 60000)) {
       await this.authenticate();
+    }
+  }
+
+  /**
+   * Fetch agent name from ElevenLabs API using agent ID
+   * @param {string} agentId - ElevenLabs agent ID
+   * @returns {Promise<string|null>} Agent name or null if not found/error
+   */
+  async getAgentName(agentId) {
+    if (!agentId || !this.elevenlabsApiKey) {
+      this.logger.debug('Cannot fetch agent name: missing agentId or API key', {
+        hasAgentId: !!agentId,
+        hasApiKey: !!this.elevenlabsApiKey
+      });
+      return null;
+    }
+
+    try {
+      const response = await axios.get(`https://api.elevenlabs.io/v1/convai/agents/${agentId}`, {
+        method: 'GET',
+        headers: {
+          'xi-api-key': this.elevenlabsApiKey
+        },
+        timeout: 10000
+      });
+
+      const agentName = response.data?.name || null;
+
+      if (agentName) {
+        this.logger.info('Fetched agent name from ElevenLabs', {
+          agentId,
+          agentName
+        });
+      }
+
+      return agentName;
+    } catch (error) {
+      this.logger.warn('Failed to fetch agent name from ElevenLabs', {
+        agentId,
+        error: error.message,
+        status: error.response?.status
+      });
+      return null;
     }
   }
 
@@ -274,7 +318,7 @@ class SuiteCRMClient {
    * @param {string} callLogData.transcript - Call transcript
    * @param {string} callLogData.successful - Call successful indicator
    * @param {string|number} callLogData.cost - Call cost
-   * @param {string} callLogData.agentId - ElevenLabs agent ID
+   * @param {string} callLogData.agentId - ElevenLabs agent ID (will automatically fetch agent name)
    * @param {number} callLogData.duration - Call duration in seconds
    * @param {string} callLogData.durationFormatted - Call duration formatted as MM:SS
    * @param {number} callLogData.startTimeUnix - Start time (Unix timestamp)
@@ -335,9 +379,15 @@ class SuiteCRMClient {
         customFields.call_cost_c = parseFloat(callLogData.cost);
       }
 
-      // Agent information
+      // Agent information - fetch agent name from ElevenLabs API
       if (callLogData.agentId && typeof callLogData.agentId === 'string' && callLogData.agentId.trim()) {
-        customFields.agent_id_c = callLogData.agentId.substring(0, 100);
+        const agentId = callLogData.agentId.trim();
+
+        // Fetch agent name from ElevenLabs API and store it
+        const agentName = await this.getAgentName(agentId);
+        if (agentName) {
+          customFields.agent_name_c = agentName.substring(0, 255);
+        }
       }
 
       // Timing information - only use fields that exist in SuiteCRM

@@ -24,6 +24,7 @@ services:
       
       # ElevenLabs Configuration
       ELEVENLABS_WEBHOOK_SECRET: ${ELEVENLABS_WEBHOOK_SECRET}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY}
       
       # SuiteCRM Configuration
       SUITECRM_URL: ${SUITECRM_URL}
