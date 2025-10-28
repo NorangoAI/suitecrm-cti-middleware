@@ -404,7 +404,7 @@ logger.info('Initializing CTI Middleware services...');
 
 const freepbxClient = new FreePBXClient(config.get('freepbx.ami'), logger);
 const elevenLabsWebhook = new ElevenLabsWebhook(config.get('elevenlabs'), logger);
-const suitecrmClient = new SuiteCRMClient(config.get('suitecrm'), logger);
+const suitecrmClient = new SuiteCRMClient(config.get('suitecrm'), logger, config.get('elevenlabs.apiKey'));
 const wsServer = new WebSocketServer(config.get('websocket'), logger);
 const ctiMiddleware = new CTIMiddleware(
   freepbxClient,
