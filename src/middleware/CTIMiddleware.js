@@ -222,16 +222,18 @@ class CTIMiddleware extends EventEmitter {
         // Create call record in SuiteCRM (if available)
         if (this.isSuiteCRMAvailable()) {
           try {
+            // Only use standard Call module fields to avoid custom field validation errors
+            // Custom fields will be stored in CallLog record when webhook arrives
             const crmCallData = {
               name: `Call from ${callData.callerIdNum}`,
               callerIdNum: callData.callerIdNum,
-              callerIdName: callData.callerIdName || activeCall.callerIdName,
+              // Note: Not passing callerIdName, conversationId, or other custom fields
+              // as they don't exist in the standard Calls module
               startTime: activeCall.startTime,
               duration: callData.duration,
               status: 'Held',
               direction: 'Inbound',
-              description: `Call ended: ${callData.causeTxt}\nChannel: ${callData.channel}`,
-              conversationId: activeCall.conversationId // Will be added by webhook if available
+              description: `Call ended: ${callData.causeTxt}\nChannel: ${callData.channel}`
             };
 
             const result = await this.suitecrm.createCall(crmCallData);
@@ -343,6 +345,9 @@ class CTIMiddleware extends EventEmitter {
               conversationId: callData.conversationId,
               callerName: callData.userName || matchingCall.callerIdName || '',
               phoneNumber: callData.phoneNumber || matchingCall.callerIdNum || '',
+              fromNumber: callData.fromNumber || '',
+              toNumber: callData.toNumber || '',
+              callSid: callData.callSid || '',
               summary: callData.summary,
               transcript: transcript,
               successful: callData.callSuccessful,
@@ -392,23 +397,12 @@ class CTIMiddleware extends EventEmitter {
 
           const transcript = this.elevenlabs.formatTranscript(callData.transcript);
 
-          const crmCallData = {
-            name: `AI Call - ${callData.conversationId}`,
-            startTime: new Date(callData.startTime * 1000).toISOString(),
-            duration: callData.duration,
-            status: 'Held',
-            direction: 'Inbound',
-            description: `AI-assisted call\nTermination: ${callData.terminationReason}\nAgent ID: ${callData.agentId}`,
-            callerIdName: callData.userName || '',
-            callerIdNum: callData.phoneNumber || '',
-            aiSummary: callData.summary,
-            transcript: transcript,
-            callSuccessful: callData.callSuccessful,
-            cost: callData.cost,
+          // Skip creating a Call record in the standard Calls module
+          // because custom fields are not configured there.
+          // Instead, we only create a comprehensive CallLog record below.
+          this.logger.debug('Skipping Call record creation - using CallLog only', {
             conversationId: callData.conversationId
-          };
-
-          await this.suitecrm.createCall(crmCallData);
+          });
 
           // Also create a record in Call Logs module
           try {
@@ -417,6 +411,9 @@ class CTIMiddleware extends EventEmitter {
               conversationId: callData.conversationId,
               callerName: callData.userName || '',
               phoneNumber: callData.phoneNumber || '',
+              fromNumber: callData.fromNumber || '',
+              toNumber: callData.toNumber || '',
+              callSid: callData.callSid || '',
               summary: callData.summary,
               transcript: transcript,
               successful: callData.callSuccessful,

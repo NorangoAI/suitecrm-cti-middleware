@@ -171,20 +171,29 @@ class ElevenLabsWebhook {
 
     const data = event.data;
 
-    // Extract phone number from various possible sources
-    const phoneNumber =
-      data.conversation_initiation_client_data?.dynamic_variables?.phone ||
-      data.conversation_initiation_client_data?.dynamic_variables?.phone_number ||
-      data.conversation_initiation_client_data?.dynamic_variables?.caller_id ||
-      data.metadata?.phone_number ||
-      data.metadata?.phone_call?.phone_number ||
-      data.metadata?.phone_call?.from ||
-      data.metadata?.phone_call?.to ||
-      (data.metadata?.phone_call?.sip_headers && (
-        data.metadata.phone_call.sip_headers['From'] ||
-        data.metadata.phone_call.sip_headers['To']
-      )) ||
-      '';
+    // Extract phone_call object
+    const phoneCall = data.metadata?.phone_call || {};
+
+    // Extract direction from phone_call, default to 'inbound'
+    const directionRaw = phoneCall.direction || 'inbound';
+    const direction = directionRaw.charAt(0).toUpperCase() + directionRaw.slice(1); // Capitalize first letter
+
+    // Extract phone numbers from phone_call
+    const agentNumber = phoneCall.agent_number || '';
+    const externalNumber = phoneCall.external_number || '';
+
+    // Format numbers based on direction
+    let fromNumber, toNumber;
+    if (directionRaw.toLowerCase() === 'inbound') {
+      fromNumber = externalNumber; // External caller
+      toNumber = agentNumber;   // Agent/AI system
+    } else {
+      fromNumber = agentNumber; // Agent/AI system
+      toNumber = externalNumber; // External call recipient
+    }
+
+    // Extract Call SID
+    const callSid = phoneCall.call_sid || '';
 
     // Extract user name from various sources
     const userName =
@@ -216,22 +225,14 @@ class ElevenLabsWebhook {
     const startTimeFormatted = formatTimestamp(startTimeUnix);
     const acceptedTimeFormatted = formatTimestamp(acceptedTimeUnix);
 
-    // Determine direction based on conversation source or default to Inbound
-    // If system initiated (like outbound campaigns), set to Outbound
-    // Otherwise, treat as Inbound (someone called the system)
-    const determineDirection = () => {
-      const source = data.metadata?.conversation_initiation_source;
-      // Check if there are any indicators of outbound initiation
-      // For now, default to Inbound since AI calls are typically inbound
-      // This can be overridden if needed based on specific use cases
-      return 'Inbound';
-    };
-
     return {
       agentId: data.agent_id,
       conversationId: data.conversation_id,
       status: data.status,
-      direction: determineDirection(),
+      direction: direction,
+      fromNumber: fromNumber,
+      toNumber: toNumber,
+      callSid: callSid,
       startTime: data.metadata?.start_time_unix_secs,
       duration: durationSeconds,
       durationFormatted: formattedDuration,
@@ -242,7 +243,7 @@ class ElevenLabsWebhook {
       evaluationResults: data.analysis?.evaluation_criteria_results,
       dataCollectionResults: data.analysis?.data_collection_results,
       userName: userName,
-      phoneNumber: phoneNumber,
+      phoneNumber: fromNumber || toNumber || '', // Legacy field for backward compatibility
       feedback: data.metadata?.feedback,
       terminationReason: data.metadata?.termination_reason,
       eventTimestamp: event.event_timestamp,
@@ -254,7 +255,10 @@ class ElevenLabsWebhook {
       mainLanguage: data.metadata?.main_language,
       callSummaryTitle: data.analysis?.call_summary_title,
       authorizationMethod: data.metadata?.authorization_method,
-      conversationSource: data.metadata?.conversation_initiation_source
+      conversationSource: data.metadata?.conversation_initiation_source,
+      // Phone call metadata
+      phoneNumberId: phoneCall.phone_number_id || '',
+      callType: phoneCall.type || ''
     };
   }
 
