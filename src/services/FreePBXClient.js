@@ -17,6 +17,11 @@ class FreePBXClient extends EventEmitter {
    */
   async connect() {
     try {
+      // Validate configuration
+      if (!this.config.username || !this.config.secret) {
+        throw new Error('AMI credentials not configured (AMI_USERNAME and AMI_SECRET required)');
+      }
+
       this.ami = new AsteriskManager(
         this.config.port,
         this.config.host,
@@ -30,7 +35,12 @@ class FreePBXClient extends EventEmitter {
 
       // Connect to AMI
       await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('AMI connection timeout after 10 seconds'));
+        }, 10000);
+
         this.ami.on('connect', () => {
+          clearTimeout(timeout);
           this.connected = true;
           this.logger.info('Connected to FreePBX AMI', {
             host: this.config.host,
@@ -40,6 +50,7 @@ class FreePBXClient extends EventEmitter {
         });
 
         this.ami.on('error', (error) => {
+          clearTimeout(timeout);
           this.logger.error('AMI Connection error', error);
           reject(error);
         });
@@ -50,7 +61,10 @@ class FreePBXClient extends EventEmitter {
 
       return true;
     } catch (error) {
-      this.logger.error('Failed to connect to FreePBX AMI', error);
+      this.logger.error('Failed to connect to FreePBX AMI', error, {
+        host: this.config.host,
+        port: this.config.port
+      });
       this.handleReconnect();
       throw error;
     }

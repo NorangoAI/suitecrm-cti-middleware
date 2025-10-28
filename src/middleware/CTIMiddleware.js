@@ -42,21 +42,58 @@ class CTIMiddleware extends EventEmitter {
     try {
       this.logger.info('Initializing CTI Middleware...');
 
-      // Test SuiteCRM connection
-      const suitecrmOk = await this.suitecrm.testConnection();
-      if (!suitecrmOk) {
-        throw new Error('SuiteCRM connection test failed');
+      // Test SuiteCRM connection (optional - log warning if fails)
+      try {
+        await this.suitecrm.validateConfig();
+        const connectivity = await this.suitecrm.testAPIConnectivity();
+
+        if (!connectivity.reachable) {
+          throw new Error('SuiteCRM server is not reachable');
+        }
+
+        const connectionTest = await this.suitecrm.testConnection();
+        if (!connectionTest.success) {
+          throw new Error(`Connection test failed: ${connectionTest.error}`);
+        }
+
+        this.logger.info('SuiteCRM connected successfully');
+      } catch (error) {
+        this.logger.error('SuiteCRM initialization failed', error);
+        // Disable CRM features but continue running
       }
 
       // Connect to FreePBX AMI
-      await this.freepbx.connect();
+      // try {
+      //   await this.freepbx.connect();
+      //   this.logger.info('FreePBX AMI connection successful');
+      // } catch (error) {
+      //   this.logger.warn('FreePBX AMI connection failed - call tracking will be disabled', {
+      //     error: error.message,
+      //     hint: 'Configure AMI_HOST, AMI_USERNAME, AMI_SECRET in .env'
+      //   });
+      // }
 
-      this.logger.info('CTI Middleware initialized successfully');
+      this.logger.info('CTI Middleware initialized (some services may be disabled)');
       return true;
     } catch (error) {
       this.logger.error('Failed to initialize CTI Middleware', error);
       throw error;
     }
+  }
+
+  /**
+   * Check if SuiteCRM is available
+   */
+  isSuiteCRMAvailable() {
+    return this.suitecrm && this.suitecrm.accessToken !== null;
+  }
+
+  /**
+   * Check if FreePBX is connected
+   */
+  isFreePBXConnected() {
+    // return this.freepbx && this.freepbx.isConnected();
+    return false;
   }
 
   /**
@@ -76,9 +113,18 @@ class CTIMiddleware extends EventEmitter {
         events: ['new']
       });
 
-      // Search for existing contact in SuiteCRM
-      const contactResult = await this.suitecrm.searchContactByPhone(callData.callerIdNum);
-      const accountResult = await this.suitecrm.searchAccountByPhone(callData.callerIdNum);
+      // Search for existing contact in SuiteCRM (if available)
+      let contactResult = { found: false, data: [] };
+      let accountResult = { found: false, data: [] };
+
+      if (this.isSuiteCRMAvailable()) {
+        try {
+          contactResult = await this.suitecrm.searchContactByPhone(callData.callerIdNum);
+          accountResult = await this.suitecrm.searchAccountByPhone(callData.callerIdNum);
+        } catch (error) {
+          this.logger.warn('Failed to search CRM for caller', { error: error.message });
+        }
+      }
 
       // Prepare screen pop data
       const screenPopData = {
@@ -173,38 +219,46 @@ class CTIMiddleware extends EventEmitter {
         activeCall.hangupCause = callData.causeTxt;
         activeCall.events.push('hangup');
 
-        // Create call record in SuiteCRM
-        const crmCallData = {
-          name: `Call from ${callData.callerIdNum}`,
-          callerIdNum: callData.callerIdNum,
-          callerIdName: callData.callerIdName || activeCall.callerIdName,
-          startTime: activeCall.startTime,
-          duration: callData.duration,
-          status: 'Held',
-          direction: 'Inbound',
-          description: `Call ended: ${callData.causeTxt}\nChannel: ${callData.channel}`,
-          conversationId: activeCall.conversationId // Will be added by webhook if available
-        };
+        // Create call record in SuiteCRM (if available)
+        if (this.isSuiteCRMAvailable()) {
+          try {
+            const crmCallData = {
+              name: `Call from ${callData.callerIdNum}`,
+              callerIdNum: callData.callerIdNum,
+              callerIdName: callData.callerIdName || activeCall.callerIdName,
+              startTime: activeCall.startTime,
+              duration: callData.duration,
+              status: 'Held',
+              direction: 'Inbound',
+              description: `Call ended: ${callData.causeTxt}\nChannel: ${callData.channel}`,
+              conversationId: activeCall.conversationId // Will be added by webhook if available
+            };
 
-        const result = await this.suitecrm.createCall(crmCallData);
+            const result = await this.suitecrm.createCall(crmCallData);
 
-        if (result.success) {
-          activeCall.crmCallId = result.id;
+            if (result.success) {
+              activeCall.crmCallId = result.id;
 
-          // Link to contact if found
-          if (activeCall.contact?.id) {
-            await this.suitecrm.linkCallToContact(result.id, activeCall.contact.id);
+              // Link to contact if found
+              if (activeCall.contact?.id) {
+                await this.suitecrm.linkCallToContact(result.id, activeCall.contact.id);
+              }
+
+              // Link to account if found
+              if (activeCall.account?.id) {
+                await this.suitecrm.linkCallToAccount(result.id, activeCall.account.id);
+              }
+
+              this.logger.info('Call record created in CRM', {
+                crmCallId: result.id,
+                uniqueId: callData.uniqueId
+              });
+            }
+          } catch (error) {
+            this.logger.error('Failed to create call record in CRM', error);
           }
-
-          // Link to account if found
-          if (activeCall.account?.id) {
-            await this.suitecrm.linkCallToAccount(result.id, activeCall.account.id);
-          }
-
-          this.logger.info('Call record created in CRM', {
-            crmCallId: result.id,
-            uniqueId: callData.uniqueId
-          });
+        } else {
+          this.logger.debug('Skipping CRM call record creation - SuiteCRM not available');
         }
 
         // Send hangup notification to WebSocket clients
@@ -251,7 +305,9 @@ class CTIMiddleware extends EventEmitter {
       this.logger.info('Processing post-call transcription', {
         conversationId: callData.conversationId,
         duration: callData.duration,
-        callSuccessful: callData.callSuccessful
+        callSuccessful: callData.callSuccessful,
+        phoneNumber: callData.phoneNumber || '(not provided)',
+        userName: callData.userName || '(not provided)'
       });
 
       // Find matching active call by conversation ID or phone number
@@ -265,51 +321,136 @@ class CTIMiddleware extends EventEmitter {
         }
       }
 
-      // If call already has CRM record, update it with AI data
-      if (matchingCall?.crmCallId) {
-        const transcript = this.elevenlabs.formatTranscript(callData.transcript);
+      // If call already has CRM record, update it with AI data (if SuiteCRM available)
+      if (matchingCall?.crmCallId && this.isSuiteCRMAvailable()) {
+        try {
+          const transcript = this.elevenlabs.formatTranscript(callData.transcript);
 
-        const updates = {
-          ai_summary_c: callData.summary,
-          call_transcript_c: transcript,
-          call_successful_c: callData.callSuccessful,
-          call_cost_c: callData.cost,
-          conversation_id_c: callData.conversationId
-        };
+          const updates = {
+            ai_summary_c: callData.summary,
+            call_transcript_c: transcript,
+            call_successful_c: callData.callSuccessful,
+            call_cost_c: callData.cost,
+            conversation_id_c: callData.conversationId
+          };
 
-        await this.suitecrm.updateCall(matchingCall.crmCallId, updates);
+          await this.suitecrm.updateCall(matchingCall.crmCallId, updates);
 
-        this.logger.info('Call record updated with AI data', {
-          crmCallId: matchingCall.crmCallId,
-          conversationId: callData.conversationId
-        });
+          // Also create a record in Call Logs module for better organization
+          try {
+            await this.suitecrm.createCallLog({
+              name: `Call Log - ${callData.conversationId}`,
+              conversationId: callData.conversationId,
+              callerName: callData.userName || matchingCall.callerIdName || '',
+              phoneNumber: callData.phoneNumber || matchingCall.callerIdNum || '',
+              summary: callData.summary,
+              transcript: transcript,
+              successful: callData.callSuccessful,
+              cost: callData.cost,
+              // Additional fields
+              agentId: callData.agentId,
+              duration: callData.duration,
+              durationFormatted: callData.durationFormatted,
+              startTimeUnix: callData.startTimeUnix,
+              acceptedTimeUnix: callData.acceptedTimeUnix,
+              startTimeFormatted: callData.startTimeFormatted,
+              acceptedTimeFormatted: callData.acceptedTimeFormatted,
+              terminationReason: callData.terminationReason,
+              mainLanguage: callData.mainLanguage,
+              callSummaryTitle: callData.callSummaryTitle,
+              status: callData.status,
+              direction: callData.direction,
+              evaluationResults: callData.evaluationResults,
+              dataCollectionResults: callData.dataCollectionResults,
+              feedback: callData.feedback,
+              authorizationMethod: callData.authorizationMethod,
+              conversationSource: callData.conversationSource
+            });
+          } catch (logError) {
+            // Log but don't fail - Call Logs module might not be installed
+            this.logger.warn('Failed to create call log record (module may not be installed)', {
+              error: logError.message
+            });
+          }
 
-        // Clean up active call data
-        this.activeCalls.delete(matchingCall.uniqueId);
+          this.logger.info('Call record updated with AI data', {
+            crmCallId: matchingCall.crmCallId,
+            conversationId: callData.conversationId
+          });
 
-      } else {
+          // Clean up active call data
+          this.activeCalls.delete(matchingCall.uniqueId);
+        } catch (error) {
+          this.logger.error('Failed to update CRM with AI data', error);
+        }
+      } else if (this.isSuiteCRMAvailable()) {
         // Create new call record if not found (webhook arrived before AMI hangup)
-        this.logger.warn('Creating call record from webhook (no matching AMI call found)', {
-          conversationId: callData.conversationId
-        });
+        try {
+          this.logger.warn('Creating call record from webhook (no matching AMI call found)', {
+            conversationId: callData.conversationId
+          });
 
-        const transcript = this.elevenlabs.formatTranscript(callData.transcript);
+          const transcript = this.elevenlabs.formatTranscript(callData.transcript);
 
-        const crmCallData = {
-          name: `AI Call - ${callData.conversationId}`,
-          startTime: new Date(callData.startTime * 1000).toISOString(),
-          duration: callData.duration,
-          status: 'Held',
-          direction: 'Inbound',
-          description: `AI-assisted call\nTermination: ${callData.terminationReason}`,
-          aiSummary: callData.summary,
-          transcript: transcript,
-          callSuccessful: callData.callSuccessful,
-          cost: callData.cost,
-          conversationId: callData.conversationId
-        };
+          const crmCallData = {
+            name: `AI Call - ${callData.conversationId}`,
+            startTime: new Date(callData.startTime * 1000).toISOString(),
+            duration: callData.duration,
+            status: 'Held',
+            direction: 'Inbound',
+            description: `AI-assisted call\nTermination: ${callData.terminationReason}\nAgent ID: ${callData.agentId}`,
+            callerIdName: callData.userName || '',
+            callerIdNum: callData.phoneNumber || '',
+            aiSummary: callData.summary,
+            transcript: transcript,
+            callSuccessful: callData.callSuccessful,
+            cost: callData.cost,
+            conversationId: callData.conversationId
+          };
 
-        await this.suitecrm.createCall(crmCallData);
+          await this.suitecrm.createCall(crmCallData);
+
+          // Also create a record in Call Logs module
+          try {
+            await this.suitecrm.createCallLog({
+              name: `Call Log - ${callData.conversationId}`,
+              conversationId: callData.conversationId,
+              callerName: callData.userName || '',
+              phoneNumber: callData.phoneNumber || '',
+              summary: callData.summary,
+              transcript: transcript,
+              successful: callData.callSuccessful,
+              cost: callData.cost,
+              // Additional fields
+              agentId: callData.agentId,
+              duration: callData.duration,
+              durationFormatted: callData.durationFormatted,
+              startTimeUnix: callData.startTimeUnix,
+              acceptedTimeUnix: callData.acceptedTimeUnix,
+              startTimeFormatted: callData.startTimeFormatted,
+              acceptedTimeFormatted: callData.acceptedTimeFormatted,
+              terminationReason: callData.terminationReason,
+              mainLanguage: callData.mainLanguage,
+              callSummaryTitle: callData.callSummaryTitle,
+              status: callData.status,
+              direction: callData.direction,
+              evaluationResults: callData.evaluationResults,
+              dataCollectionResults: callData.dataCollectionResults,
+              feedback: callData.feedback,
+              authorizationMethod: callData.authorizationMethod,
+              conversationSource: callData.conversationSource
+            });
+          } catch (logError) {
+            // Log but don't fail - Call Logs module might not be installed
+            this.logger.warn('Failed to create call log record (module may not be installed)', {
+              error: logError.message
+            });
+          }
+        } catch (error) {
+          this.logger.error('Failed to create CRM call record from webhook', error);
+        }
+      } else {
+        this.logger.debug('Skipping CRM update - SuiteCRM not available');
       }
 
       // Send AI summary to WebSocket clients
@@ -395,7 +536,8 @@ class CTIMiddleware extends EventEmitter {
   getStats() {
     return {
       activeCalls: this.activeCalls.size,
-      freepbxConnected: this.freepbx.isConnected(),
+      freepbxConnected: this.isFreePBXConnected(),
+      suitecrmConnected: this.isSuiteCRMAvailable(),
       wsConnections: this.wsServer.getConnectionsCount(),
       connectedAgents: this.wsServer.getConnectedAgents()
     };

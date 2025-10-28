@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const express = require('express');
+const moment = require('moment');
 
 class ElevenLabsWebhook {
   constructor(config, logger) {
@@ -23,7 +24,8 @@ class ElevenLabsWebhook {
     });
 
     // Main webhook endpoint
-    this.router.post(this.config.webhookPath, express.raw({ type: 'application/json' }), async (req, res) => {
+    // Increase body size limit to 50mb to handle large payloads (audio webhooks can be very large)
+    this.router.post(this.config.webhookPath, express.raw({ type: 'application/json', limit: '50mb' }), async (req, res) => {
       try {
         const startTime = Date.now();
 
@@ -133,6 +135,7 @@ class ElevenLabsWebhook {
    */
   async processWebhookEvent(event) {
     const eventType = event.type;
+    console.log("event_type", event);
 
     // Call registered handlers for this event type
     if (this.handlers.has(eventType)) {
@@ -168,22 +171,90 @@ class ElevenLabsWebhook {
 
     const data = event.data;
 
+    // Extract phone number from various possible sources
+    const phoneNumber =
+      data.conversation_initiation_client_data?.dynamic_variables?.phone ||
+      data.conversation_initiation_client_data?.dynamic_variables?.phone_number ||
+      data.conversation_initiation_client_data?.dynamic_variables?.caller_id ||
+      data.metadata?.phone_number ||
+      data.metadata?.phone_call?.phone_number ||
+      data.metadata?.phone_call?.from ||
+      data.metadata?.phone_call?.to ||
+      (data.metadata?.phone_call?.sip_headers && (
+        data.metadata.phone_call.sip_headers['From'] ||
+        data.metadata.phone_call.sip_headers['To']
+      )) ||
+      '';
+
+    // Extract user name from various sources
+    const userName =
+      data.conversation_initiation_client_data?.dynamic_variables?.user_name ||
+      data.conversation_initiation_client_data?.dynamic_variables?.name ||
+      data.conversation_initiation_client_data?.dynamic_variables?.caller_name ||
+      '';
+
+    // Format duration from seconds to MM:SS
+    const formatDuration = (seconds) => {
+      if (!seconds || seconds < 0) return '0:00';
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+
+    // Format Unix timestamp to readable date format
+    const formatTimestamp = (unixTimestamp) => {
+      if (!unixTimestamp) return '';
+      return moment.unix(unixTimestamp).format('MMM D, YYYY, h:mm A');
+    };
+
+    const durationSeconds = data.metadata?.call_duration_secs;
+    const formattedDuration = formatDuration(durationSeconds);
+
+    // Format timestamps
+    const startTimeUnix = data.metadata?.start_time_unix_secs;
+    const acceptedTimeUnix = data.metadata?.accepted_time_unix_secs;
+    const startTimeFormatted = formatTimestamp(startTimeUnix);
+    const acceptedTimeFormatted = formatTimestamp(acceptedTimeUnix);
+
+    // Determine direction based on conversation source or default to Inbound
+    // If system initiated (like outbound campaigns), set to Outbound
+    // Otherwise, treat as Inbound (someone called the system)
+    const determineDirection = () => {
+      const source = data.metadata?.conversation_initiation_source;
+      // Check if there are any indicators of outbound initiation
+      // For now, default to Inbound since AI calls are typically inbound
+      // This can be overridden if needed based on specific use cases
+      return 'Inbound';
+    };
+
     return {
       agentId: data.agent_id,
       conversationId: data.conversation_id,
       status: data.status,
+      direction: determineDirection(),
       startTime: data.metadata?.start_time_unix_secs,
-      duration: data.metadata?.call_duration_secs,
+      duration: durationSeconds,
+      durationFormatted: formattedDuration,
       cost: data.metadata?.cost,
       transcript: data.transcript,
       summary: data.analysis?.transcript_summary,
       callSuccessful: data.analysis?.call_successful,
       evaluationResults: data.analysis?.evaluation_criteria_results,
       dataCollectionResults: data.analysis?.data_collection_results,
-      userName: data.conversation_initiation_client_data?.dynamic_variables?.user_name,
+      userName: userName,
+      phoneNumber: phoneNumber,
       feedback: data.metadata?.feedback,
       terminationReason: data.metadata?.termination_reason,
-      eventTimestamp: event.event_timestamp
+      eventTimestamp: event.event_timestamp,
+      // Additional fields for comprehensive recording
+      startTimeUnix: startTimeUnix,
+      acceptedTimeUnix: acceptedTimeUnix,
+      startTimeFormatted: startTimeFormatted,
+      acceptedTimeFormatted: acceptedTimeFormatted,
+      mainLanguage: data.metadata?.main_language,
+      callSummaryTitle: data.analysis?.call_summary_title,
+      authorizationMethod: data.metadata?.authorization_method,
+      conversationSource: data.metadata?.conversation_initiation_source
     };
   }
 
