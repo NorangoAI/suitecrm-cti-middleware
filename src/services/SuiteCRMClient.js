@@ -136,10 +136,9 @@ class SuiteCRMClient {
       description: callData.description || ''
     };
 
-    // Only add phone field if it has a value (SuiteCRM doesn't accept empty phone)
-    if (callData.callerIdNum && typeof callData.callerIdNum === 'string' && callData.callerIdNum.trim()) {
-      baseAttributes.phone = callData.callerIdNum;
-    }
+    // Note: The Call module doesn't have a 'phone' field in SuiteCRM
+    // Phone numbers should be stored as relationships to Contacts/Accounts
+    // or in custom fields if needed
 
     try {
 
@@ -267,7 +266,10 @@ class SuiteCRMClient {
    * @param {string} callLogData.name - Call log name
    * @param {string} callLogData.conversationId - ElevenLabs conversation ID
    * @param {string} callLogData.callerName - Caller's name
-   * @param {string} callLogData.phoneNumber - Phone number (optional)
+   * @param {string} callLogData.phoneNumber - Phone number (optional, legacy)
+   * @param {string} callLogData.fromNumber - From number (based on direction)
+   * @param {string} callLogData.toNumber - To number (based on direction)
+   * @param {string} callLogData.callSid - Call SID (unique identifier)
    * @param {string} callLogData.summary - AI-generated summary
    * @param {string} callLogData.transcript - Call transcript
    * @param {string} callLogData.successful - Call successful indicator
@@ -372,6 +374,20 @@ class SuiteCRMClient {
       // Call direction - note: field name is "directions_c" (plural) in SuiteCRM
       if (callLogData.direction && typeof callLogData.direction === 'string' && callLogData.direction.trim()) {
         customFields.directions_c = callLogData.direction;
+      }
+
+      // Phone numbers based on direction
+      if (callLogData.fromNumber && typeof callLogData.fromNumber === 'string' && callLogData.fromNumber.trim()) {
+        customFields.from_number_c = callLogData.fromNumber;
+      }
+
+      if (callLogData.toNumber && typeof callLogData.toNumber === 'string' && callLogData.toNumber.trim()) {
+        customFields.to_number_c = callLogData.toNumber;
+      }
+
+      // Call SID (unique identifier)
+      if (callLogData.callSid && typeof callLogData.callSid === 'string' && callLogData.callSid.trim()) {
+        customFields.call_sid_c = callLogData.callSid;
       }
 
       // Analysis results (store as JSON strings)
