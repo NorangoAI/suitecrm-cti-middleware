@@ -7,6 +7,8 @@ A comprehensive Computer Telephony Integration (CTI) middleware that connects Fr
 - **FreePBX/Asterisk Integration** - Real-time call events via AMI (Asterisk Manager Interface)
 - **ElevenLabs AI Agent Webhook** - Receive post-call transcriptions and AI analysis
 - **SuiteCRM Integration** - Automatic call logging with OAuth2 authentication
+- **Call Logs Module** - Dedicated Call Logs (CLL_CallLog) module for AI call tracking
+- **Dual Recording** - Records to both Calls and Call Logs modules for better organization
 - **Real-time Screen Pop** - WebSocket-based agent notifications with caller context
 - **Contact/Account Lookup** - Automatic caller identification from CRM
 - **AI-Powered Analytics** - Call transcriptions, summaries, and success metrics
@@ -143,31 +145,42 @@ A comprehensive Computer Telephony Integration (CTI) middleware that connects Fr
 
 2. **Configure webhook URL:**
    ```
-   https://your-server.com/webhook/elevenlabs
+   https://your-server.com/cti-middleware/webhook/elevenlabs
    ```
 
 3. **Select events:**
    - Enable "post_call_transcription" event
 
+4. **Call Logs Recording:**
+   - Calls are automatically recorded to both Calls and Call Logs (CLL_CallLog) modules
+   - Call Logs module provides better organization for AI calls
+   - See `ELEVENLABS_CALL_LOGS_UPDATE.md` for details
+
 ## 📡 API Endpoints
+
+**Note:** All API endpoints are prefixed with `/cti-middleware` (configurable via `API_PREFIX` env variable)
 
 ### Health & Status
 
-- `GET /health` - Health check endpoint
-- `GET /api/status` - Get middleware statistics (requires API key)
+- `GET /cti-middleware/health` - Health check endpoint
+- `GET /cti-middleware/api/status` - Get middleware statistics (requires API key)
 
 ### Call Management
 
-- `GET /api/calls/active` - Get all active calls (requires API key)
-- `POST /api/screen-pop` - Manually trigger screen pop (requires API key)
+- `GET /cti-middleware/api/calls/active` - Get all active calls (requires API key)
+- `POST /cti-middleware/api/screen-pop` - Manually trigger screen pop (requires API key)
 
 ### Agent Management
 
-- `GET /api/agents` - Get connected agents (requires API key)
+- `GET /cti-middleware/api/agents` - Get connected agents (requires API key)
 
 ### Webhooks
 
-- `POST /webhook/elevenlabs` - ElevenLabs webhook endpoint (HMAC verified)
+- `POST /cti-middleware/webhook/elevenlabs` - ElevenLabs webhook endpoint (HMAC verified)
+
+### API Discovery
+
+- `GET /` - Root endpoint showing all available API endpoints
 
 ## 🔌 WebSocket Client Integration
 
@@ -403,6 +416,7 @@ cti-middleware/
 | `NODE_ENV` | No | `development` | Environment mode |
 | `PORT` | No | `3000` | HTTP server port |
 | `WS_PORT` | No | `3001` | WebSocket port (deprecated, uses same as PORT) |
+| `API_PREFIX` | No | `/cti-middleware` | API URL prefix for all endpoints |
 | `AMI_HOST` | Yes | - | FreePBX/Asterisk host |
 | `AMI_PORT` | No | `5038` | AMI port |
 | `AMI_USERNAME` | Yes | - | AMI username |

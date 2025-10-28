@@ -18,7 +18,8 @@ class Config {
       server: {
         port: parseInt(process.env.PORT) || fileConfig.server?.port || 3000,
         wsPort: parseInt(process.env.WS_PORT) || fileConfig.server?.wsPort || 3001,
-        environment: process.env.NODE_ENV || fileConfig.server?.environment || 'development'
+        environment: process.env.NODE_ENV || fileConfig.server?.environment || 'development',
+        apiPrefix: process.env.API_PREFIX || fileConfig.server?.apiPrefix || '/cti-middleware'
       },
       freepbx: {
         ami: {
@@ -70,26 +71,35 @@ class Config {
   }
 
   validate() {
+    const warnings = [];
     const errors = [];
 
-    // Validate FreePBX AMI config
+    // Validate FreePBX AMI config (optional - warn if not configured)
     if (!this.config.freepbx.ami.username || !this.config.freepbx.ami.secret) {
-      errors.push('FreePBX AMI credentials are required (AMI_USERNAME, AMI_SECRET)');
+      warnings.push('FreePBX AMI credentials not configured (AMI_USERNAME, AMI_SECRET) - call tracking will be disabled');
     }
 
-    // Validate ElevenLabs config
+    // Validate ElevenLabs config (optional)
     if (!this.config.elevenlabs.webhookSecret) {
-      console.warn('Warning: ELEVENLABS_WEBHOOK_SECRET not set. Webhook signature verification will be skipped.');
+      warnings.push('ELEVENLABS_WEBHOOK_SECRET not set - webhook signature verification will be skipped');
     }
 
-    // Validate SuiteCRM config
+    // Validate SuiteCRM config (optional - warn if not configured)
     if (!this.config.suitecrm.baseUrl) {
-      errors.push('SuiteCRM URL is required (SUITECRM_URL)');
+      warnings.push('SuiteCRM URL not configured (SUITECRM_URL) - CRM features will be disabled');
     }
     if (!this.config.suitecrm.clientId || !this.config.suitecrm.clientSecret) {
-      errors.push('SuiteCRM OAuth2 credentials are required (SUITECRM_CLIENT_ID, SUITECRM_CLIENT_SECRET)');
+      warnings.push('SuiteCRM OAuth2 credentials not configured (SUITECRM_CLIENT_ID, SUITECRM_CLIENT_SECRET) - CRM features will be disabled');
     }
 
+    // Show warnings
+    if (warnings.length > 0) {
+      console.warn('\n⚠️  Configuration Warnings:');
+      warnings.forEach(warning => console.warn(`   - ${warning}`));
+      console.warn('');
+    }
+
+    // Only fail on critical errors (none currently - all services are optional)
     if (errors.length > 0) {
       throw new Error(`Configuration validation failed:\n${errors.join('\n')}`);
     }

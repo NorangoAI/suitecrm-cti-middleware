@@ -31,23 +31,32 @@ app.use(cors({
   credentials: true
 }));
 
+// Trust proxy - required for rate limiting and getting correct client IP
+app.set('trust proxy', true);
+
+// API prefix from configuration
+const API_PREFIX = config.get('server.apiPrefix') || '/cti-middleware';
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: config.get('security.rateLimitWindowMs'),
   max: config.get('security.rateLimitMaxRequests'),
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  validate: {
+    trustProxy: false, // Skip trust proxy validation for webhook endpoints
+    xForwardedForHeader: false
+  }
 });
 
-app.use('/webhook', limiter);
-
 // Body parser for JSON (except webhook routes which use raw body)
+// Increase limit to 50mb to handle large payloads
 app.use((req, res, next) => {
-  if (req.path.startsWith('/webhook/')) {
+  if (req.path.includes('/webhook/')) {
     next();
   } else {
-    express.json()(req, res, next);
+    express.json({ limit: '50mb' })(req, res, next);
   }
 });
 
@@ -70,11 +79,17 @@ const validateApiKey = (req, res, next) => {
   next();
 };
 
+// Create API router
+const apiRouter = express.Router();
+
+// Apply rate limiting to webhook routes
+apiRouter.use('/webhook', limiter);
+
 // Apply API key validation to protected routes
-app.use('/api', validateApiKey);
+apiRouter.use('/api', validateApiKey);
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+apiRouter.get('/health', (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -91,7 +106,7 @@ app.get('/health', (req, res) => {
 });
 
 // Status endpoint with stats
-app.get('/api/status', (req, res) => {
+apiRouter.get('/api/status', (req, res) => {
   try {
     const stats = ctiMiddleware.getStats();
     res.json({
@@ -106,7 +121,7 @@ app.get('/api/status', (req, res) => {
 });
 
 // Get active calls
-app.get('/api/calls/active', (req, res) => {
+apiRouter.get('/api/calls/active', (req, res) => {
   try {
     const calls = ctiMiddleware.getAllActiveCalls();
     res.json({
@@ -120,7 +135,7 @@ app.get('/api/calls/active', (req, res) => {
 });
 
 // Get connected agents
-app.get('/api/agents', (req, res) => {
+apiRouter.get('/api/agents', (req, res) => {
   try {
     const agents = wsServer.getConnectedAgents();
     res.json({
@@ -134,7 +149,7 @@ app.get('/api/agents', (req, res) => {
 });
 
 // Manual screen pop endpoint
-app.post('/api/screen-pop', (req, res) => {
+apiRouter.post('/api/screen-pop', (req, res) => {
   try {
     const { agentIdentifier, callData } = req.body;
 
@@ -154,6 +169,236 @@ app.post('/api/screen-pop', (req, res) => {
   }
 });
 
+// ====================================
+// SuiteCRM Test Endpoints
+// ====================================
+
+// Test SuiteCRM authentication
+apiRouter.get('/api/test/crm/auth', async (req, res) => {
+  try {
+    const result = await suitecrmClient.testConnection();
+    res.json({
+      success: result,
+      message: result ? 'SuiteCRM authentication successful' : 'SuiteCRM authentication failed',
+      authenticated: suitecrmClient.accessToken !== null,
+      tokenExpiry: suitecrmClient.tokenExpiry ? new Date(suitecrmClient.tokenExpiry).toISOString() : null
+    });
+  } catch (error) {
+    logger.error('SuiteCRM auth test failed', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      hint: 'Check SUITECRM_URL, SUITECRM_CLIENT_ID, SUITECRM_CLIENT_SECRET in .env'
+    });
+  }
+});
+
+// Test search contact by phone
+apiRouter.get('/api/test/crm/contact/:phone', async (req, res) => {
+  try {
+    const { phone } = req.params;
+    const result = await suitecrmClient.searchContactByPhone(phone);
+
+    res.json({
+      success: result.success,
+      found: result.found,
+      count: result.data.length,
+      contacts: result.data.map(contact => ({
+        id: contact.id,
+        name: `${contact.attributes.first_name} ${contact.attributes.last_name}`,
+        phone: contact.attributes.phone_mobile || contact.attributes.phone_work,
+        email: contact.attributes.email1
+      }))
+    });
+  } catch (error) {
+    logger.error('Contact search test failed', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Test search account by phone
+apiRouter.get('/api/test/crm/account/:phone', async (req, res) => {
+  try {
+    const { phone } = req.params;
+    const result = await suitecrmClient.searchAccountByPhone(phone);
+
+    res.json({
+      success: result.success,
+      found: result.found,
+      count: result.data.length,
+      accounts: result.data.map(account => ({
+        id: account.id,
+        name: account.attributes.name,
+        phone: account.attributes.phone_office,
+        email: account.attributes.email1
+      }))
+    });
+  } catch (error) {
+    logger.error('Account search test failed', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Test create call record
+apiRouter.post('/api/test/crm/call', async (req, res) => {
+  try {
+    const {
+      callerIdNum = '+1234567890',
+      callerIdName = 'Test Caller',
+      duration = 300,
+      description = 'Test call created via API'
+    } = req.body;
+
+    const callData = {
+      name: `Test Call from ${callerIdNum}`,
+      callerIdNum,
+      callerIdName,
+      startTime: new Date().toISOString(),
+      duration,
+      status: 'Held',
+      direction: 'Inbound',
+      description,
+      conversationId: `test-${Date.now()}`
+    };
+
+    const result = await suitecrmClient.createCall(callData);
+
+    res.json({
+      success: result.success,
+      callId: result.id,
+      message: 'Test call record created successfully',
+      data: result.data
+    });
+  } catch (error) {
+    logger.error('Create call test failed', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Test update call record
+apiRouter.patch('/api/test/crm/call/:callId', async (req, res) => {
+  try {
+    const { callId } = req.params;
+    const updates = req.body;
+
+    const result = await suitecrmClient.updateCall(callId, updates);
+
+    res.json({
+      success: result.success,
+      message: 'Call record updated successfully',
+      data: result.data
+    });
+  } catch (error) {
+    logger.error('Update call test failed', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Test get call record
+apiRouter.get('/api/test/crm/call/:callId', async (req, res) => {
+  try {
+    const { callId } = req.params;
+    const result = await suitecrmClient.getCall(callId);
+
+    res.json({
+      success: result.success,
+      data: result.data
+    });
+  } catch (error) {
+    logger.error('Get call test failed', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Test full workflow (search + create + link)
+apiRouter.post('/api/test/crm/workflow', async (req, res) => {
+  try {
+    const { phoneNumber = '+1234567890' } = req.body;
+    const workflow = {
+      steps: [],
+      results: {}
+    };
+
+    // Step 1: Search for contact
+    workflow.steps.push('Searching for contact...');
+    const contactResult = await suitecrmClient.searchContactByPhone(phoneNumber);
+    workflow.results.contactSearch = {
+      found: contactResult.found,
+      count: contactResult.data.length
+    };
+
+    // Step 2: Search for account
+    workflow.steps.push('Searching for account...');
+    const accountResult = await suitecrmClient.searchAccountByPhone(phoneNumber);
+    workflow.results.accountSearch = {
+      found: accountResult.found,
+      count: accountResult.data.length
+    };
+
+    // Step 3: Create call record
+    workflow.steps.push('Creating call record...');
+    const callData = {
+      name: `Test Workflow Call from ${phoneNumber}`,
+      callerIdNum: phoneNumber,
+      callerIdName: 'Test Workflow Caller',
+      startTime: new Date().toISOString(),
+      duration: 180,
+      status: 'Held',
+      direction: 'Inbound',
+      description: 'Test call created via workflow test'
+    };
+    const callResult = await suitecrmClient.createCall(callData);
+    workflow.results.callCreation = {
+      success: callResult.success,
+      callId: callResult.id
+    };
+
+    // Step 4: Link to contact if found
+    if (contactResult.found && callResult.success) {
+      workflow.steps.push('Linking to contact...');
+      await suitecrmClient.linkCallToContact(callResult.id, contactResult.data[0].id);
+      workflow.results.contactLink = { success: true };
+    }
+
+    // Step 5: Link to account if found
+    if (accountResult.found && callResult.success) {
+      workflow.steps.push('Linking to account...');
+      await suitecrmClient.linkCallToAccount(callResult.id, accountResult.data[0].id);
+      workflow.results.accountLink = { success: true };
+    }
+
+    workflow.steps.push('Workflow completed!');
+
+    res.json({
+      success: true,
+      message: 'Full workflow test completed',
+      workflow
+    });
+  } catch (error) {
+    logger.error('Workflow test failed', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      workflow: req.body
+    });
+  }
+});
+
 // Initialize services
 logger.info('Initializing CTI Middleware services...');
 
@@ -169,12 +414,35 @@ const ctiMiddleware = new CTIMiddleware(
   logger
 );
 
-// Mount ElevenLabs webhook routes
-app.use(elevenLabsWebhook.getRouter());
+// Mount ElevenLabs webhook routes to API router
+apiRouter.use(elevenLabsWebhook.getRouter());
+
+// Mount API router with prefix
+app.use(API_PREFIX, apiRouter);
+
+// Root redirect
+app.get('/', (req, res) => {
+  res.json({
+    service: 'CTI Middleware',
+    version: '1.0.0',
+    endpoints: {
+      health: `${API_PREFIX}/health`,
+      status: `${API_PREFIX}/api/status`,
+      activeCalls: `${API_PREFIX}/api/calls/active`,
+      agents: `${API_PREFIX}/api/agents`,
+      screenPop: `${API_PREFIX}/api/screen-pop`,
+      webhook: `${API_PREFIX}/webhook/elevenlabs`,
+      websocket: '/ws'
+    }
+  });
+});
 
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({ error: 'Not found' });
+  res.status(404).json({
+    error: 'Not found',
+    hint: `All API endpoints are under ${API_PREFIX}. Try ${API_PREFIX}/health`
+  });
 });
 
 // Error handler
@@ -217,8 +485,9 @@ async function start() {
       console.log(`🚀 CTI Middleware Server Running`);
       console.log(`===========================================`);
       console.log(`HTTP Server: http://localhost:${port}`);
+      console.log(`API Prefix: ${API_PREFIX}`);
       console.log(`WebSocket: ws://localhost:${port}/ws`);
-      console.log(`Health Check: http://localhost:${port}/health`);
+      console.log(`Health Check: http://localhost:${port}${API_PREFIX}/health`);
       console.log(`Environment: ${config.get('server.environment')}`);
       console.log('===========================================\n');
     });

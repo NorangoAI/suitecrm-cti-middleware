@@ -2,7 +2,8 @@
   "server": {
     "port": 3000,
     "wsPort": 3001,
-    "environment": "development"
+    "environment": "development",
+    "apiPrefix": "/cti-middleware"
   },
   "freepbx": {
     "ami": {
