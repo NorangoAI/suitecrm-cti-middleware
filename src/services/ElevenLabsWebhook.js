@@ -230,6 +230,9 @@ class ElevenLabsWebhook {
       conversationId: data.conversation_id,
       status: data.status,
       direction: direction,
+      // Expose raw numbers for CRM call log fields
+      agentNumber: agentNumber,
+      externalNumber: externalNumber,
       fromNumber: fromNumber,
       toNumber: toNumber,
       callSid: callSid,

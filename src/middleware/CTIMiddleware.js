@@ -345,8 +345,10 @@ class CTIMiddleware extends EventEmitter {
               conversationId: callData.conversationId,
               callerName: callData.userName || matchingCall.callerIdName || '',
               phoneNumber: callData.phoneNumber || matchingCall.callerIdNum || '',
-              fromNumber: callData.fromNumber || '',
-              toNumber: callData.toNumber || '',
+              // New fields
+              agentNumber: callData.agentNumber || '',
+              externalNumber: callData.externalNumber || '',
+              // Legacy fields removed from CRM mapping
               callSid: callData.callSid || '',
               summary: callData.summary,
               transcript: transcript,
@@ -411,8 +413,10 @@ class CTIMiddleware extends EventEmitter {
               conversationId: callData.conversationId,
               callerName: callData.userName || '',
               phoneNumber: callData.phoneNumber || '',
-              fromNumber: callData.fromNumber || '',
-              toNumber: callData.toNumber || '',
+              // New fields
+              agentNumber: callData.agentNumber || '',
+              externalNumber: callData.externalNumber || '',
+              // Legacy fields removed from CRM mapping
               callSid: callData.callSid || '',
               summary: callData.summary,
               transcript: transcript,
