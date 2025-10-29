@@ -426,13 +426,13 @@ class SuiteCRMClient {
         customFields.directions_c = callLogData.direction;
       }
 
-      // Phone numbers based on direction
-      if (callLogData.fromNumber && typeof callLogData.fromNumber === 'string' && callLogData.fromNumber.trim()) {
-        customFields.from_number_c = callLogData.fromNumber;
+      // Phone numbers - store explicit agent and customer numbers
+      if (callLogData.agentNumber && typeof callLogData.agentNumber === 'string' && callLogData.agentNumber.trim()) {
+        customFields.agent_number_c = callLogData.agentNumber;
       }
 
-      if (callLogData.toNumber && typeof callLogData.toNumber === 'string' && callLogData.toNumber.trim()) {
-        customFields.to_number_c = callLogData.toNumber;
+      if (callLogData.externalNumber && typeof callLogData.externalNumber === 'string' && callLogData.externalNumber.trim()) {
+        customFields.customer_number_c = callLogData.externalNumber;
       }
 
       // Call SID (unique identifier)
